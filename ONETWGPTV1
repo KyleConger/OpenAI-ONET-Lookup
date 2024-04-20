@@ -1,0 +1,94 @@
+python
+from openai import OpenAI
+client = OpenAI()
+import random
+from OnetWebService import OnetWebService
+import sys
+import re
+
+seed = (random.randint(1, 10000))
+print(seed)
+
+def get_user_input(prompt):
+    result = ''
+    while len(result) == 0:
+        result = input(prompt + ': ').strip()
+    return result
+
+mostsimilar = get_user_input('Enter the experience breakdown')
+
+thread = client.beta.threads.create()
+
+message = client.beta.threads.messages.create(
+  thread_id=thread.id,
+  role="user",
+  content=mostsimilar
+)
+
+run = client.beta.threads.runs.create_and_poll(
+  thread_id=thread.id,
+  assistant_id="YOUR.ASSISTANTID.HERE",
+)
+if run.status == 'completed':
+  messages = client.beta.threads.messages.list(
+    thread_id=thread.id
+  )
+else:
+  print(run.status)
+
+roletitleconfirmed = messages.data[0].content[0].text.value.split('【')[0]
+
+def check_for_error(service_result):
+    if 'error' in service_result:
+        sys.exit(service_result['error'])
+
+def display_tasks(tasks_result):
+    if 'task' in tasks_result:
+        print("Tasks:")
+        for task in tasks_result['task']:
+            print(f"  - {task['name']} (ID: {task['id']})")
+    else:
+        print("No tasks data found.")
+
+username = 'YOUR.USERNAME'
+password = 'YOUR.PASSWORD'
+onet_ws = OnetWebService(username, password)
+
+vinfo = onet_ws.call('about')
+check_for_error(vinfo)
+print("Connected to O*NET Web Services version " + str(vinfo['api_version']))
+print("")
+
+# Section 1 : Occupation Search
+kwquery = roletitleconfirmed
+kwresults = onet_ws.call('online/search', ('keyword', kwquery), ('end', 5))
+check_for_error(kwresults)
+
+if (not 'occupation' in kwresults) or (len(kwresults['occupation']) == 0):
+    print("No relevant occupations were found.")
+else:
+    print("Most relevant occupations for \"" + kwquery + "\":")
+    occupations = {}
+    for occ in kwresults['occupation']:
+        occ_code = occ['code']
+        occ_title = occ['title']
+        print(f"  {occ_code} - {occ_title}")
+        occupations[occ_code] = occ_title
+    print("")
+
+    # Ask user to select an O*NET-SOC Code if occupations are found
+    while True:
+        code_query = get_user_input('Enter an O*NET-SOC Code from the list above to fetch tasks')
+        if code_query in occupations:
+            break
+        print("Invalid O*NET-SOC Code. Please enter a code from the list.")
+
+    # Section 2 : Fetch Tasks based on selected SOC Code
+    tasks_results = onet_ws.call(f'online/related_task/tasks/{code_query}')
+    check_for_error(tasks_results)
+
+    if tasks_results:
+        print(f"Tasks for SOC Code \"{code_query}\":")
+        display_tasks(tasks_results)
+    else:
+        print("No tasks information was found for the given SOC Code.")
